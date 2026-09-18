@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "caseId": "protected-conflict",
+  "topic": "展馆语音导览试点交接与复核",
+  "fictitious": true,
+  "notice": "虚构的新业务验收输入；互相矛盾的事实陈述没有裁决证据，不能当作真实业务记录或模型结果。",
+  "assembly": [
+    {"file": "source-a.md", "scope": "document"},
+    {"file": "source-b.md", "heading": "## 运营组现场记录"},
+    {"file": "source-c.md", "heading": "## 复核与后续"}
+  ],
+  "locks": [{"file": "source-c.md", "startsWith": "对外说明边界（整段锁定）：", "reason": "整段措辞须由用户保持，模型不得改写、删除或移动其含义。"}],
+  "conflicts": [{
+    "id": "east-hall-offline-at-opening",
+    "statements": [
+      {"file": "source-a.md", "startsWith": "设备组记录：2026-11-06 开馆时，东厅导览终端已启用离线播放。"},
+      {"file": "source-b.md", "startsWith": "运营组记录：2026-11-06 开馆时，东厅导览终端未启用离线播放。"}
+    ],
+    "evidenceAvailable": false,
+    "requiredHandling": "保留双方陈述及其来源，或提出明确待用户确认的建议；不得自行选边、平均处理或删除异议。",
+    "forbiddenResolution": "不得编造不同批次、不同设备、不同时间、配置延迟、最终复核结论或任何新证据来消解冲突。"
+  }],
+  "coverage": ["whole-document-transition", "terminology", "ambiguous-reference", "unresolved-conflict", "no-fabricated-evidence", "protected-values", "locked-paragraph", "explicit-review", "timeout-recovery"],
+  "qualityJudgment": "人工对照全文、两个相冲突的原始段落、实际 before/after 和 reason/summary 作出语义判断；保留关键词、数值一致或schema通过均不能证明没有篡改事实。",
+  "automaticProtectionLimitation": "程序可以拒绝数字、单位、引文和整段锁的改变，但普通未锁文字中的已启用/未启用变化仍可能通过词法检查；冲突裁决和编造必须由人工语义审阅确认。",
+  "manualReview": [
+    {"id": "whole-document-transition", "inspect": "连读设备记录、运营记录、复核安排，检查全文是否既连贯又保留证据状态。", "pass": "连接语帮助读者看清各部门关注点与后续核对关系，没有把写作上的顺畅变成事实已一致。", "fail": "只增加连接词，或用因此、已经等表述暗中宣布冲突解决。"},
+    {"id": "unresolved-conflict", "inspect": "并列核对同一日期、同一时点、同一展厅的两项相反陈述，以及它们在成稿中的来源归属。", "pass": "双方陈述仍在，或冲突作为明确未应用、待确认的建议显示；读者不会误以为已有裁决。", "fail": "擅自选择任一陈述为真、删除相反陈述、改换主体或弱化否定，使冲突在无证据时消失。"},
+    {"id": "no-fabricated-evidence", "inspect": "逐句检查新增的原因、时间线、批次、设备范围与复核结论在来源中是否有依据。", "pass": "没有材料外的新证据；无法确定的解释明确不作为事实采用。", "fail": "臆造分批上线、时间先后、局部故障或复核成功，即使听起来合理也失败。"},
+    {"id": "protected-values", "inspect": "对照日期、24 台、120 MB、90 秒、8,400 元及观众引文；同时查看每块保护检查。", "pass": "数字、单位与完整引文均原样保留，默认保护仍开启；被阻止的建议不进入成稿。", "fail": "改单位、金额、日期、数量或引文措辞；把虚构配置写成已证实效果。"},
+    {"id": "locked-paragraph", "inspect": "逐字比较对外说明边界整段及其锁定状态。", "pass": "锁定整段保持完全一致；任何破坏锁的实际建议都被阻止应用。", "fail": "改写、删除、截短或解除锁定段落，或在别处新增与锁定边界相反的承诺。"},
+    {"id": "terminology-and-reference", "inspect": "审阅耳伴服务/语音导览的称呼及设备借用卡、扫码说明后的它。", "pass": "有上下文依据的称呼和指代得到改善；无法唯一确定的对象作为待确认事项。", "fail": "统一表面词汇却改变功能范围，或凭猜测给某方分配新的职责。"},
+    {"id": "explicit-review", "inspect": "比较未接受、部分接受和拒绝后的实际成稿与导出，记录具体语义理由。", "pass": "未接受内容不改稿；冲突仍可辨认，保护不变；允许拒绝整批而不将无输出写为有效润色。", "fail": "自动接受、静默裁决，或把程序拦截成功包装成模型输出质量通过。"}
+  ],
+  "timeoutRecoveryPlan": [
+    "真实请求前保存 prepared.json 与哈希清单，记录双方冲突块、锁定块和保护设置；本准备过程不检查登录也不调用模型。",
+    "设置真实后端的有界超时/取消；若未完成，仅保留真实错误与请求状态，不用fixture补齐响应。",
+    "超时后重新打开 prepared.json，对比成稿哈希、双方陈述、整段锁、数字/单位/引文；确认全部与基线一致。",
+    "若用户在等待期间编辑，旧建议必须失效；恢复时优先保留用户新稿，不以旧快照覆盖。",
+    "条件恢复后由实际验收入口重新请求，并人工判断冲突和保护是否合格；缺真实结果就继续标记效果未验证。"
+  ],
+  "liveExecution": "not-run"
+}

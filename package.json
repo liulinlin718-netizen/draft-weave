@@ -1,0 +1,15 @@
+{
+  "name": "draft-weave",
+  "version": "0.2.2",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "Pick paragraphs across drafts, weave a manuscript, and review whole-document polish.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "files": ["server.mjs", "server/paths.mjs", "server/model-bridge.mjs", "public/index.html", "public/app.mjs", "public/window-drafts.mjs", "public/core.mjs", "public/samples.mjs", "public/styles.css", "examples/source-a.md", "examples/source-b.md", "examples/source-c.md", "docs/MODELS.md", "scripts/start.ps1", "scripts/start-browser.ps1", "scripts/start-browser.mjs", "scripts/login-codex.ps1", "scripts/login-codex.mjs", "scripts/check-model.ps1", "scripts/check-model.mjs"],
+  "engines": { "node": ">=22" }
+}

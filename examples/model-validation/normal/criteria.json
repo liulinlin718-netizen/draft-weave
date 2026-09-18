@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "caseId": "normal",
+  "topic": "展馆语音导览试点",
+  "fictitious": true,
+  "notice": "虚构的新业务验收输入；不是模型输出、真实试点结果或通过记录。",
+  "assembly": [
+    {"file": "source-a.md", "scope": "document"},
+    {"file": "source-b.md", "heading": "## 试行安排"},
+    {"file": "source-c.md", "heading": "## 复盘与后续"}
+  ],
+  "locks": [],
+  "conflicts": [],
+  "coverage": ["whole-document-transition", "terminology", "repeated-introduction", "ambiguous-reference", "protected-values", "explicit-review", "timeout-recovery"],
+  "qualityJudgment": "必须并读全文、来源与实际修改集，说明修改对上下文的作用；不能用出现某个关键词、修改条数或输出可解析直接判定润色有效。没有输出时不得记录效果通过。",
+  "manualReview": [
+    {"id": "whole-document-transition", "inspect": "连读现场观察、试行安排、复盘与后续，比较各章之间的问题与回应是否对应。", "pass": "至少能指出实际改善的跨章联系，并解释后文如何回应前文；各段原有业务含义仍成立。", "fail": "仅机械追加连接词、只处理相邻接缝，或新编协作流程、因果关系和已发生结果。"},
+    {"id": "terminology", "inspect": "结合读者视角检查耳伴服务、随身讲解、移动听展与语音导览是否指向同一服务。", "pass": "称呼变化被一致、自然地处理，或提出清楚的待用户选择说明；保留确有差别的设备与内容概念。", "fail": "只是命中预设名称，或把设备、音频内容与服务流程不加区分地合并。"},
+    {"id": "repeated-introduction", "inspect": "比较背景与试行安排中的重复引言，以及移除或改写后的全文节奏。", "pass": "重复被有意义地合并、删减或解释；必要目标仍存在，后文能直接推进方案。", "fail": "重复仍造成全文停顿，或为消重丢失业务目标、添加材料中不存在的判断。"},
+    {"id": "ambiguous-reference", "inspect": "逐处确认它等指代对应的是扫码说明、操作记录还是服务，不凭就近名词强行猜测。", "pass": "能从上下文支持的指代得到澄清；无法唯一判断时保留不确定性并请求确认。", "fail": "句子更顺但指代对象错了，或编造原文未支持的职责与动作。"},
+    {"id": "protected-values", "inspect": "比较每块数字与单位、虚构受访者原话，复核程序保护结果。", "pass": "默认数字与引文保护保持开启，受保护文字完全一致，未把示例数据写成实际成效。", "fail": "改变数量、单位、引文内容或数据性质；程序拦截的修改仍被当作已成功应用。"},
+    {"id": "explicit-review", "inspect": "检查返回修改集前后成稿快照，并在人工选择接受／拒绝后比较导出。", "pass": "未接受前成稿不变；选定建议接受后才出现，拒绝项保留原文；评审记录引用具体 before/after 与理由。", "fail": "自动套用所有建议，或把建议格式合格当作质量合格。"}
+  ],
+  "timeoutRecoveryPlan": [
+    "真实请求前记录 prepared.json、manuscript.md 与 input.json 的 SHA-256，并备份当前项目；本材料准备脚本不发送请求。",
+    "由真实模型验收入口设置有界超时和取消；没有完成响应时只记录 timeout/cancel/error，不生成替代建议。",
+    "失败后比较成稿、保护设置与来源映射，确认与请求前快照一致；重新打开 prepared.json 验证可恢复。",
+    "若等待期间发生用户编辑，旧响应只能保持过期或被拒绝，不能以旧 before 覆盖新稿。",
+    "仅在外部条件恢复且再次明确发起请求后重试；人工逐项审阅实际返回，未取得真实结果就保持效果未验证。"
+  ],
+  "liveExecution": "not-run"
+}

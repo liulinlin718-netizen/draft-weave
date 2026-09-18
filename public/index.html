@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>文稿拼接画布 · Draft Weave</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>文稿拼接画布</strong><span class="brand-en">DRAFT WEAVE</span></div>
+    <div class="header-actions"><span id="save-state" role="status">本地草稿</span><button data-action="window-drafts">窗口草稿</button><button data-action="open-project">打开项目</button><button data-action="save-project">保存项目 ↗</button></div>
+  </header>
+  <main>
+    <div id="recovery-banner" class="recovery-banner" role="alert" hidden><span>本地草稿无法读取，自动保存已暂停。备份原始数据后可继续自动保存。</span><button data-action="recover-local">备份原稿并继续</button></div>
+    <div id="window-banner" class="recovery-banner" role="status" hidden><span id="window-message"></span><button id="use-window-draft" data-action="promote-window" hidden>本稿设为默认 · 保留旧稿</button></div>
+    <div class="workspace-tools">
+      <div class="tools-left"><button class="primary" data-action="import">＋ 导入文稿</button><button data-action="paste">粘贴文本</button><span class="divider"></span><button data-action="samples">示例稿</button><button data-action="new" title="新建空白项目">新建</button></div>
+      <div class="tools-right"><button id="undo" data-action="undo" title="撤销 Ctrl+Z">↶ 撤销</button><button data-action="settings" id="model-status">模型连接 <span class="status-dot"></span></button></div>
+    </div>
+    <div class="workspace">
+      <section class="candidates" aria-label="候选文稿">
+        <div class="region-heading"><span>候选文稿</span><small>点选段落，或整章选入 <span aria-hidden="true">↘</span></small></div>
+        <div class="source-columns" id="source-columns"></div>
+      </section>
+      <section class="composition" aria-label="成稿画布">
+        <div class="region-heading"><div class="draft-tabs"><button data-action="tab-draft" class="active" id="tab-draft">成稿画布</button><button data-action="tab-review" id="tab-review">润色审阅 <span id="review-count"></span></button></div><span id="draft-count" class="subtle">0 块</span></div>
+        <div class="draft-toolbar"><span id="draft-description">按你的顺序，留下需要的文字</span><div class="protection"><label><input id="protect-numbers" type="checkbox" checked> 数字</label><label><input id="protect-quotes" type="checkbox" checked> 引文</label><span title="程序拦截润色中对数字或引文的修改">保护</span></div></div>
+        <div id="replace-banner" hidden></div>
+        <div id="structure-notices" class="structure-notices"></div>
+        <div id="draft" class="draft-scroll" tabindex="-1"></div>
+        <div id="review" class="draft-scroll review-scroll" hidden></div>
+        <footer class="compose-footer"><div class="footer-actions"><button data-action="preview" id="preview-button">原样拼接</button><button class="primary" data-action="polish" id="polish-button">整体连接性润色 <span aria-hidden="true">→</span></button><button data-action="cancel" id="cancel-button" hidden>取消请求</button></div><div class="export-line"><span id="request-state">先选择，再连成一稿</span><button data-action="export" id="export-button">导出 Markdown ↗</button></div></footer>
+      </section>
+    </div>
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <input id="source-files" type="file" accept=".md,.markdown,.txt,text/plain,text/markdown" multiple hidden>
+  <input id="project-file" type="file" accept=".json,application/json" hidden>
+  <input id="review-file" type="file" accept=".json,application/json" hidden>
+  <dialog id="paste-dialog"><form id="paste-form"><div class="dialog-title"><h2>粘贴一份文稿</h2><button type="button" data-action="close-dialog" aria-label="关闭">×</button></div><label class="field-label">文稿名称<input name="name" required maxlength="100" placeholder="例如：B · 修订稿"></label><label class="field-label">Markdown 或纯文本<textarea name="text" required rows="12" placeholder="# 背景&#10;&#10;在这里粘贴正文……"></textarea></label><div class="dialog-bottom"><span>空行分段，# 标识标题层级</span><button class="primary" type="submit">放入候选稿</button></div></form></dialog>
+  <dialog id="settings-dialog"><div class="dialog-title"><h2>整体润色连接</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><label class="field-label">使用后端<select id="provider"><option value="codex-cli">Codex CLI · ChatGPT 登录额度</option><option value="external-api">External API · 独立配置</option></select></label><div id="provider-details" class="provider-details"></div><p class="muted">请求会发送整份成稿、所有候选原稿和保护规则。返回修改集后，由你逐条决定是否应用。</p><div class="dialog-bottom"><button data-action="refresh-status">重新检查连接</button><button data-action="import-review">导入离线修改集</button></div></dialog>
+  <dialog id="preview-dialog" class="wide-dialog"><div class="dialog-title"><h2>原样拼接 · Markdown</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p class="muted">此处与导出顺序一致。只有已接受的润色会进入成稿。</p><textarea id="markdown-preview" readonly rows="18" aria-label="原样拼接 Markdown"></textarea><div class="dialog-bottom"><span id="preview-issues"></span><button data-action="export" class="primary">导出 Markdown ↗</button></div></dialog>
+  <dialog id="export-dialog"><div class="dialog-title"><h2 id="export-title">已保存</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p id="export-message"></p><details class="export-location"><summary>查看本地副本位置</summary><code id="export-path" class="path-display"></code></details><div class="dialog-bottom"><button data-action="close-dialog">返回画布</button><a id="export-download" class="download-button primary" download>下载文件</a></div></dialog>
+  <dialog id="window-dialog"><div class="dialog-title"><h2>窗口草稿</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p class="muted">恢复时先保留当前稿。历史副本可下载后删除，以释放浏览器空间；清除浏览器数据会删除这些副本。</p><div id="window-copies"></div></dialog>
+</body>
+</html>
