@@ -1,80 +1,98 @@
-# 文稿拼接画布 · Draft Weave
+# Draft Weave
 
-**Pick the paragraphs you trust, weave your manuscript, approve the final polish.**
+**Pick the paragraphs you trust, assemble the manuscript you want, and review connective edits one by one.**
 
-A 稿选章，B 稿换段，C 稿补结尾。直接拼出想要的文稿，再逐条审阅全文润色建议。
+[简体中文](README.zh-CN.md) · [Model setup](docs/MODELS.md) · [Development guide](docs/DEVELOPMENT.md)
 
-## 开始使用
+Writers often have several drafts where each version contains something worth keeping: one has the right structure, another explains a section better, and a third has the strongest ending. Draft Weave provides a visual canvas for combining those pieces without surrendering control of the final text.
 
-需要 **Node.js 22+** 和现代浏览器。没有 npm 运行依赖，也不用构建。在项目目录运行：
+## What it does
+
+- Import Markdown or plain-text drafts.
+- Select an entire chapter, a section, or individual paragraphs from each source.
+- Reorder, replace, edit, and lock blocks in the assembled manuscript.
+- Preview the exact concatenated result before any rewriting.
+- Ask an optional model for whole-document connective edits, then accept or reject every suggestion separately.
+- Export Markdown or save a project file that preserves sources, selections, locks, and review decisions.
+
+```mermaid
+flowchart LR
+    A[Draft A] --> D[Selection canvas]
+    B[Draft B] --> D
+    C[Draft C] --> D
+    D --> E[Ordered manuscript]
+    E --> F{Optional polish}
+    F -->|Accept selected edits| G[Final Markdown]
+    F -->|Keep original text| G
+```
+
+## Quick start
+
+Requires Node.js 22 or later and a modern browser. There are no runtime npm dependencies and no build step.
 
 ```sh
 node server.mjs
 ```
 
-打开终端显示的地址，默认 [127.0.0.1:6410](http://127.0.0.1:6410)。Windows 可以运行 `scripts/start.ps1`；端口被占用时加 `-Port 6411`，或设置环境变量 `DW_PORT` 为 6410–6419。
+Open `http://127.0.0.1:6410` and use the sample drafts, paste text, or import `.md` / `.txt` files.
 
-需要独立浏览器数据和下载目录时，在另一个终端运行：
+The core workflow is deliberately direct:
 
-```sh
-node scripts/start-browser.mjs
-```
+1. Choose paragraphs from one or more sources.
+2. Arrange them on the manuscript canvas.
+3. Edit or lock blocks that must remain unchanged.
+4. Preview the literal assembly.
+5. Export Markdown, or review optional connective edits before exporting.
 
-它使用已有 Chrome／Edge，可通过 `--browser <可执行文件路径>` 指定 Chromium 浏览器，不安装新浏览器。两边端口须一致：浏览器用 `--port 6411`。
+## Human-controlled polishing
 
-## 一次编辑
+Draft Weave never replaces the manuscript with a single opaque model rewrite. When a model is configured, it returns discrete suggestions tied to the current text. Each suggestion can be accepted or rejected, and edits become stale if the relevant manuscript changes.
 
-1. 导入 `.md` / `.txt` 或粘贴文本；也可直接用首屏示例。
-2. 点击段落选入，或点击“选本章／选本节”。整章选入后，可单独取消其中一段。
-3. 成稿点击“替换”，再选另一稿的段落；拖动排序，或用 ↑ / ↓。直接编辑，锁定不希望润色的段落。
-4. “原样拼接”预览；“导出 Markdown”后点击下载。需要以后继续编辑，选择“保存项目”，保留原稿、选择、锁定及审阅记录。
-5. 可选：配置模型后进行“整体连接性润色”，逐项接受／拒绝。未接受的改写不会进入成稿。
+Two optional backends are supported:
 
-支持撤销、自动保存和项目文件恢复。自动保存只属于当前浏览器和端口；跨浏览器或备份请保存项目文件。历史最多 80 步。润色期间编辑成稿会使对应旧建议过期；同批逐项接受不会使其他建议过期。
+- an OpenAI-compatible external API using your endpoint and key environment variable;
+- a local Codex CLI profile using normal ChatGPT sign-in and account allowance.
 
-本地草稿损坏时会暂停自动保存，原始内容不会被示例稿覆盖。点击“备份原稿并继续”，成功写出未经改动的恢复文件后才恢复自动保存；备份失败时仍保留原始内容。
+Offline assembly and export continue to work without either backend. See [model setup](docs/MODELS.md).
 
-### 同时打开多个窗口
+## Local-first drafts
 
-- 一个窗口保存默认稿，其他窗口单独保存自己的副本。编辑中的文字、光标和润色结果不会被另一窗口的更新替换。
-- 关闭原窗口后，浏览器自动释放写入锁。如果两稿已经不同，新窗口仍独立保存；点击“本稿设为默认 · 保留旧稿”才切换，旧默认稿会先归档。归档失败就不切换。
-- 刷新恢复本窗口稿；异常关闭后，可从“窗口草稿”按时间和正文摘要找回，分别下载或恢复。恢复另一份副本前会保留当前稿。不自动合并。
-- 不支持 Web Locks 的浏览器只保存独立副本，并明确提示。每个页面实例使用不同副本，复制标签页也不会共用写入位置。
+Automatic drafts live in the browser. Each open window receives its own safe copy, and conflicting windows do not silently replace one another. For portable backup or cross-browser work, use **Save project** and keep the exported project file.
 
-窗口副本在浏览器本地，刷新和恢复可能留下历史副本。可下载后手动删除以释放空间；存储不足时会显示未保存，仍可用“保存项目”导出当前画布。清除浏览器数据会删除自动保存和窗口副本；它们不能代替文件备份。
-
-## 数据保存在哪里
-
-默认只在项目目录创建 `.runtime/` 和 `outputs/`。导出保留服务端副本，同时提供浏览器下载；导出弹窗可展开查看副本位置。
-
-可以在启动前显式设置 **`DW_DATA_DIR` 为自己的数据目录**，把源码和稿件、临时文件分开。例如 PowerShell：
+Server-side exports and optional runtime data stay in the project directory by default. Set `DW_DATA_DIR` before starting the server to keep writing data in a separate location:
 
 ```powershell
-$env:DW_DATA_DIR = Join-Path (Get-Location) 'my-writing-data'
+$env:DW_DATA_DIR = 'D:\Writing\draft-weave-data'
 node server.mjs
 ```
 
-浏览器启动、登录和配置检查应使用相同的环境变量。数据目录中的缓存、临时文件、独立浏览器 profile、CLI profile 和导出都随目录保存；输出路径拒绝越界和符号链接／junction。不会改变全局配置。个人浏览器本身及 Codex 桌面宿主的存储由它们各自管理。
+## Designed for
 
-## 可选润色
+- merging interview, report, proposal, or essay drafts;
+- creating one approved narrative from several agent-generated alternatives;
+- preserving exact passages while improving transitions around them;
+- reviewing editorial changes as decisions rather than accepting a full rewrite.
 
-提供 `external-api` 和 `codex-cli` 两种后端，见 [模型配置](docs/MODELS.md)。未配置时明确提示，离线拼接和导出照常可用。不会自动切换后端、使用假答案或替你接受建议。
+## Scope
 
-## 实际边界
+- Input is Markdown or plain text; DOCX import is outside this editor’s scope.
+- Headings, paragraphs, blank lines, and fenced code are preserved as blocks. Draft Weave is not a full rich-text or CommonMark rendering engine.
+- Number, unit, and quotation guards catch common changes but do not verify factual correctness.
+- Browser drafts are local working state, not a substitute for an exported project backup.
 
-- 支持 `#` 标题、空行分段和 fenced code；不是完整 Markdown 富文本编辑器，不导入 DOCX。
-- 保留块内文字，块间统一空行，换行统一为 LF。
-- 数字／单位／引文保护是保守的文字检查，不证明事实正确或引文归属。重要的转述可直接锁定整段。
-- 保护涵盖“8周／八周”等常见数量和单位，但并非完整单位词典；“一个”这类语词也可能被保守拦截。修改建议中的事实冲突仍需人工核对。
-- 当前已认证真实模型的润色效果尚未验证；离线修改集仅用于审阅交互验证。
-- Windows 是实际开发验收平台。Node 入口没有盘符依赖；其他操作系统完整体验尚未实测。
+## Repository guide
 
-## 开发与分发
+- [`public/`](public/) — the selection canvas and browser logic
+- [`server/`](server/) — local server, storage boundaries, and model bridge
+- [`examples/`](examples/) — sample source drafts
+- [`docs/MODELS.md`](docs/MODELS.md) — optional model configuration
 
-源码目录运行 `npm test`。浏览器回归脚本在 `test/`；可选依赖和运行方法见 [开发说明](docs/DEVELOPMENT.md)。
+## Contributing
 
-源码中运行 `npm run package` 生成 `dist/draft-weave/` 独立运行目录；已有目标会拒绝覆盖，也可用 `node scripts/package.mjs <新的项目内目录>`。发行包只包含运行源码、示例和使用文档，排除本地稿件、凭据、缓存、开发过程文件与测试录像。解压后直接 `node server.mjs`。
+```sh
+npm test
+```
 
-自有代码使用 [MIT License](LICENSE)。
+Issues and pull requests are welcome for selection ergonomics, import behavior, accessible editing, and suggestion review.
 
-0.2.2补齐常用单位保护、严格判定 API 是否完成，并支持用自己的保存项目运行可留档的模型验收。真实润色质量仍待已认证请求验证。
+Licensed under the [MIT License](LICENSE).
