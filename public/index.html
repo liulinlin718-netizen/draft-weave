@@ -11,10 +11,12 @@
 <body>
   <header class="app-header">
     <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>文稿拼接画布</strong><span class="brand-en">DRAFT WEAVE</span></div>
-    <div class="header-actions"><span id="save-state" role="status">本地草稿</span><button data-action="window-drafts">窗口草稿</button><button data-action="open-project">打开项目</button><button data-action="save-project">保存项目 ↗</button></div>
+    <div class="header-actions"><span id="save-state" role="status">本地草稿</span><button data-action="window-drafts">窗口草稿</button><button data-action="open-project">打开项目</button><button data-action="save-project">保存项目 ↗</button><button data-action="save-current" title="保留当前来源、锁定与审阅，省略撤销历史">应急保存</button></div>
   </header>
   <main>
     <div id="recovery-banner" class="recovery-banner" role="alert" hidden><span>本地草稿无法读取，自动保存已暂停。备份原始数据后可继续自动保存。</span><button data-action="recover-local">备份原稿并继续</button></div>
+    <div id="save-error-banner" class="recovery-banner" role="alert" hidden><span id="save-error-message"></span><button data-action="save-current">应急保存当前项目</button></div>
+    <div id="input-recovery-banner" class="recovery-banner" role="alert" hidden><span id="input-recovery-message"></span><button data-action="download-input">下载输入恢复日志</button></div>
     <div id="window-banner" class="recovery-banner" role="status" hidden><span id="window-message"></span><button id="use-window-draft" data-action="promote-window" hidden>本稿设为默认 · 保留旧稿</button></div>
     <div class="workspace-tools">
       <div class="tools-left"><button class="primary" data-action="import">＋ 导入文稿</button><button data-action="paste">粘贴文本</button><span class="divider"></span><button data-action="samples">示例稿</button><button data-action="new" title="新建空白项目">新建</button></div>
@@ -44,6 +46,7 @@
   <dialog id="settings-dialog"><div class="dialog-title"><h2>整体润色连接</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><label class="field-label">使用后端<select id="provider"><option value="codex-cli">Codex CLI · ChatGPT 登录额度</option><option value="external-api">External API · 独立配置</option></select></label><div id="provider-details" class="provider-details"></div><p class="muted">请求会发送整份成稿、所有候选原稿和保护规则。返回修改集后，由你逐条决定是否应用。</p><div class="dialog-bottom"><button data-action="refresh-status">重新检查连接</button><button data-action="import-review">导入离线修改集</button></div></dialog>
   <dialog id="preview-dialog" class="wide-dialog"><div class="dialog-title"><h2>原样拼接 · Markdown</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p class="muted">此处与导出顺序一致。只有已接受的润色会进入成稿。</p><textarea id="markdown-preview" readonly rows="18" aria-label="原样拼接 Markdown"></textarea><div class="dialog-bottom"><span id="preview-issues"></span><button data-action="export" class="primary">导出 Markdown ↗</button></div></dialog>
   <dialog id="export-dialog"><div class="dialog-title"><h2 id="export-title">已保存</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p id="export-message"></p><details class="export-location"><summary>查看本地副本位置</summary><code id="export-path" class="path-display"></code></details><div class="dialog-bottom"><button data-action="close-dialog">返回画布</button><a id="export-download" class="download-button primary" download>下载文件</a></div></dialog>
+  <dialog id="reuse-dialog"><div class="dialog-title"><h2>已有同稿审阅</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p>成稿、候选原稿、保护规则与连接配置均与现有审阅一致。可以继续审阅，也可以重新请求一次。</p><div class="dialog-bottom"><button data-action="force-polish">重新润色 · 发起新请求</button><button class="primary" data-action="reuse-review">继续已有审阅</button></div></dialog>
   <dialog id="window-dialog"><div class="dialog-title"><h2>窗口草稿</h2><button data-action="close-dialog" aria-label="关闭">×</button></div><p class="muted">恢复时先保留当前稿。历史副本可下载后删除，以释放浏览器空间；清除浏览器数据会删除这些副本。</p><div id="window-copies"></div></dialog>
 </body>
 </html>

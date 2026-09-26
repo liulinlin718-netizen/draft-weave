@@ -8,3 +8,13 @@
 .download-button{display:inline-block;padding:10px 16px;border-radius:4px;background:var(--accent);color:#fff;text-decoration:none;font-size:12px;font-weight:600}.download-button:hover{filter:brightness(1.1)}.download-button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.export-location{font-size:12px;color:var(--muted);margin-top:16px}.export-location summary{cursor:pointer;margin-bottom:8px}
 .recovery-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#fff4d7;color:#745d24;font-size:12px;line-height:1.6}.recovery-banner[hidden]{display:none}.recovery-banner button{border:1px solid #bda875;white-space:nowrap;font-size:12px}
 .window-copy{border-top:1px solid var(--line);padding:12px 0}.window-copy strong,.window-copy small{display:block;overflow-wrap:anywhere}.window-copy small{color:var(--muted);font-size:11px;margin:5px 0}.window-copy p{font-size:12px;line-height:1.6;overflow-wrap:anywhere;margin:8px 0;color:#59654f}.window-copy button{font-size:12px;border:1px solid var(--line);margin:4px 5px 0 0}#window-dialog{max-height:80vh;overflow:auto}#window-banner{background:#edf2e8;color:#4b6345}
+
+/* Section completion and review context stay within their reading panes. */
+.scope-actions { flex-wrap: wrap; gap: 5px; }
+.change-actions { flex-wrap: wrap; }
+.review-context,.review-usage { margin: 12px 0; padding: 10px 12px; background: #f6f5ef; border-radius: 6px; font-size: 12px; }
+.review-context summary,.review-usage summary { cursor: pointer; color: var(--green); }
+.review-context p { white-space: pre-wrap; line-height: 1.7; margin: 5px 0 12px; overflow-wrap: anywhere; }
+.review-context strong { color: var(--muted); font-size: 11px; }
+.review-usage code { display: block; overflow-wrap: anywhere; font-size: 10px; }
+.header-actions { flex-wrap: wrap; justify-content: flex-end; }

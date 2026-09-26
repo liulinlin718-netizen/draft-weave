@@ -21,7 +21,7 @@ export async function packageApp(destination = path.join(PROJECT_ROOT, 'dist', '
       await copyFile(source, output); copied.push(relative.replaceAll('\\', '/'));
     }
   }
-  for (const relative of ['README.md', 'LICENSE', ...manifest.files]) await copy(relative);
+  for (const relative of ['README.md', 'README.zh-CN.md', 'LICENSE', 'docs/images/review.png', ...manifest.files]) await copy(relative);
   await writeFile(path.join(target, 'package.json'), JSON.stringify({ ...manifest, scripts: { start: manifest.scripts.start } }, null, 2) + '\n');
   copied.push('package.json');
   return { directory: target, files: copied.sort() };

@@ -1,6 +1,7 @@
 import * as core from './core.mjs';
 import { sampleSources } from './samples.mjs';
 import { windowDrafts } from './window-drafts.mjs';
+import { preflightPolishRequest, preparePolishRequest, canReusePolishReview } from './polish-request.mjs';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -9,7 +10,11 @@ let visibleSources = [], replaceTarget = null, reviewTab = false, dragging = nul
 let provider = 'codex-cli', connection = null, activeRequest = null, toastTimer;
 let unreadableAutosave = null;
 let copiesShown = [];
+let inputRecoveryRaw = null, composing = false, deferredRender = false;
+let idleCheckpoint, maxCheckpoint, editSession = null, replaceInputPending = false;
+const sourcePositions = new Map();
 const drafts = windowDrafts(state => {
+  if (state.inputError) showInputRecovery(state.inputError, state.inputRecoveryRaw);
   if (unreadableAutosave !== null) { $('#save-state').textContent = '自动保存已暂停 · 原始草稿保留'; return; }
   const isolated = !state.owner || state.divergent;
   $('#save-state').textContent = state.error || (state.copied ? isolated ? '已另存本窗口草稿' : '已自动保存 · 本地' : '本地草稿');
@@ -31,25 +36,76 @@ function toast(message, error = false) {
   $('#toast').hidden = false;
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, error ? 7500 : 4200);
 }
-function persist() {
+function persist({ replaceInput = false } = {}) {
+  if (replaceInput) replaceInputPending = true;
   // A failed restore must never be replaced by the sample document on unload.
   if (unreadableAutosave !== null) { $('#save-state').textContent = '自动保存已暂停 · 原始草稿保留'; return; }
-  drafts.save(core.serializeProject(project), project.title);
+  try {
+    const result = drafts.save(core.serializeProject(project, { compact: true }), project.title, { replaceInput: replaceInputPending });
+    if (result.copied) replaceInputPending = false;
+    $('#save-error-banner').hidden = !result.error;
+    if (result.error) $('#save-error-message').textContent = `${result.error} 可应急保存当前项目。`;
+    return result;
+  }
+  catch (error) {
+    $('#save-state').textContent = '自动保存未完成 · 可应急保存';
+    $('#save-error-banner').hidden = false;
+    $('#save-error-message').textContent = `${error.message} 应急保存会保留当前来源、成稿、锁定和审阅，省略撤销历史。`;
+    return { copied: false, error: error.message };
+  }
 }
 function checkpointInput() {
   if (unreadableAutosave !== null) return;
   const editor = document.activeElement;
   try {
-    const snapshot = editor?.matches('textarea[data-edit-id]') ? core.editBlock(project, editor.dataset.editId, editor.value) : project;
-    drafts.save(core.serializeProject(snapshot), snapshot.title);
+    if (!editor?.matches('textarea[data-edit-id]')) return;
+    const block = project.draft.find(item => item.id === editor.dataset.editId);
+    if (block && !block.locked) drafts.recordInput({ projectId: project.id, revision: project.revision, blockId: block.id, before: block.text, text: editor.value });
   } catch { $('#save-state').textContent = '此输入尚未保存 · 请检查内容'; }
+}
+function showInputRecovery(message, raw) {
+  if (raw) inputRecoveryRaw = raw;
+  $('#input-recovery-banner').hidden = false;
+  $('#input-recovery-message').textContent = message;
+}
+function clearCheckpoints() { clearTimeout(idleCheckpoint); clearTimeout(maxCheckpoint); idleCheckpoint = maxCheckpoint = null; }
+function flushInput() {
+  clearCheckpoints();
+  if (composing) return;
+  commitActiveEditor();
+  renderNotices(); renderReview();
+  $('#undo').disabled = !project.history.length;
+  $('#draft-count').textContent = `${project.draft.length} 块 · ${core.exportMarkdown(project).replace(/\s/g, '').length.toLocaleString()} 字`;
+}
+function scheduleCheckpoint() {
+  clearTimeout(idleCheckpoint);
+  idleCheckpoint = setTimeout(flushInput, 800);
+  if (!maxCheckpoint) maxCheckpoint = setTimeout(flushInput, 4000);
+}
+function commitEditor(editor) {
+  if (composing || !editor?.matches('textarea[data-edit-id]')) return;
+  const id = editor.dataset.editId;
+  const block = project.draft.find(item => item.id === id);
+  if (!block || block.text === editor.value) return;
+  if (!editSession || editSession.id !== id || editSession.project !== project) editSession = { id, project, history: null };
+  const next = core.editBlock(project, id, editor.value);
+  // Idle checkpoints within one uninterrupted edit keep the same undo boundary.
+  if (editSession.history) next.history = editSession.history;
+  else editSession.history = next.history;
+  project = next; editSession.project = project;
+  drafts.advanceInput(project);
+  persist();
+}
+function downloadRaw(raw, filename) {
+  const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+  const link = document.createElement('a'); link.href = url; link.download = filename; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 function showWindowDrafts() {
   copiesShown = drafts.list();
   $('#window-copies').innerHTML = copiesShown.length ? copiesShown.map((copy, i) => {
-    let preview = '无法解析，可下载原始内容。';
-    try { const data = core.deserializeProject(copy.raw); preview = (data.draft.find(b => b.type !== 'heading') || data.draft[0])?.text.slice(0, 100) || '尚未选入成稿'; } catch { /* Raw bytes remain downloadable. */ }
-    return `<article class="window-copy"><strong>${escape(copy.title || '未命名草稿')}${copy.current ? ' · 当前窗口' : ''}</strong><small>${escape(copy.updatedAt ? new Date(copy.updatedAt).toLocaleString() : '原始数据保留')} · ${escape(copy.key.slice(-6))}</small><p>${escape(preview)}</p><div><button data-action="restore-window" data-id="${i}">恢复到本窗口</button><button data-action="download-window" data-id="${i}">下载副本</button>${copy.current ? '' : `<button data-action="delete-window" data-id="${i}">删除副本</button>`}</div></article>`;
+    const preview = copy.summary || '可恢复到本窗口，或下载后检查。';
+    return `<article class="window-copy"><strong>${escape(copy.title || '未命名草稿')}${copy.current ? ' · 当前窗口' : ''}</strong><small>${escape(copy.updatedAt ? new Date(copy.updatedAt).toLocaleString() : '原始数据保留')} · ${escape(copy.key.slice(-6))} · ${Number.isFinite(copy.size) ? `${(copy.size / 1024).toFixed(1)} KB` : '大小未知'}</small><p>${escape(preview)}</p><div><button data-action="restore-window" data-id="${i}">恢复到本窗口</button><button data-action="download-window" data-id="${i}">下载副本</button>${copy.current ? '' : `<button data-action="delete-window" data-id="${i}">删除副本</button>`}</div></article>`;
   }).join('') : '<p class="muted">编辑后会在这里保留窗口副本。</p>';
   $('#window-dialog').showModal();
 }
@@ -60,20 +116,19 @@ function commitActiveEditor() {
   const block = project.draft.find(item => item.id === id);
   if (!block) return null;
   const selection = { id, start: editor.selectionStart, end: editor.selectionEnd };
-  if (block.text !== editor.value) {
-    project = core.editBlock(project, id, editor.value);
-    persist();
-  }
+  commitEditor(editor);
   return selection;
 }
 function change(action, message) {
   try {
+    if (composing) throw new Error('请先完成当前输入，再执行此操作。');
     commitActiveEditor();
+    clearCheckpoints(); editSession = null;
     const next = action(project);
     if (next === project) return false;
     project = next;
     if (replaceTarget && !project.draft.some(b => b.id === replaceTarget)) replaceTarget = null;
-    persist(); render();
+    persist({ replaceInput: true }); render();
     if (message) toast(message);
     return true;
   } catch (error) { toast(error.message || '操作未完成', true); return false; }
@@ -94,9 +149,10 @@ function focusDraft(id) {
   flash(document.getElementById(`draft-${id}`));
 }
 function scrollPositions() {
-  return [...document.querySelectorAll('.source-body,.draft-scroll')].map(el => [el.id, el.scrollTop]);
+  return [...document.querySelectorAll('.draft-scroll')].map(el => [el.id, el.scrollTop]);
 }
 function render() {
+  if (composing) { deferredRender = true; return; }
   const editing = commitActiveEditor();
   const positions = scrollPositions();
   renderSources(); renderDraft(); renderReview(); renderTabs(); renderNotices();
@@ -122,6 +178,9 @@ function render() {
   });
 }
 function renderSources() {
+  document.querySelectorAll('.source-column[data-source]').forEach(el => {
+    const body = el.querySelector('.source-body'); if (body) sourcePositions.set(`${body.id}:${el.dataset.source}`, body.scrollTop);
+  });
   visibleSources = visibleSources.filter(id => sourceFor(id));
   for (const source of project.sources) { if (visibleSources.length >= 2) break; if (!visibleSources.includes(source.id)) visibleSources.push(source.id); }
   $('#source-columns').innerHTML = [0, 1].map(slot => {
@@ -131,9 +190,12 @@ function renderSources() {
     return `<article class="source-column" style="--source-color:${source.color}" data-source="${source.id}"><div class="source-header"><span class="source-letter">${String.fromCharCode(65 + sourceIndex)}</span><select aria-label="候选稿 ${slot + 1}" data-slot="${slot}">${project.sources.map(s => `<option value="${s.id}" ${s.id === source.id ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}</select></div><div class="source-body" id="source-body-${slot}">${source.blocks.map(block => {
       const selected = selectedFor(source.id, block.id);
       const order = selected ? project.draft.indexOf(selected) + 1 : null;
-      return `<div id="source-${slot}-${block.id}" class="source-block type-${block.type} level-${block.level} ${selected ? 'is-selected' : ''}" data-source-block="${block.id}">${block.type === 'heading' ? `<div class="scope-actions"><span>H${block.level}</span><button data-action="section" data-source-id="${source.id}" data-block-id="${block.id}" title="选入本标题及所有下级内容">${block.level === 1 ? '选整稿' : block.level === 2 ? '选本章' : '选本节'} ↗</button></div>` : ''}<button class="source-text" data-action="select" data-source-id="${source.id}" data-block-id="${block.id}" aria-pressed="${!!selected}" aria-label="${replaceTarget ? '替换为' : selected ? '取消' : '选入'}：${escape(textLabel(block))}">${escape(block.type === 'heading' ? block.text.replace(/^\s*#{1,6}\s*/, '') : block.text)}</button><div class="selection-indicator"><span>${replaceTarget ? '点击替换成稿段落' : selected ? '✓ 已选' : '＋ 点选加入'}</span>${selected ? `<button data-action="locate-draft" data-id="${selected.id}" title="定位成稿" class="selected-number">${String(order).padStart(2, '0')} ↗</button>` : `<span>L${block.startLine}</span>`}</div></div>`;
+      const scope = block.type === 'heading' ? core.getSectionBlockIds(source, block.id) : [];
+      const picked = scope.filter(id => selectedFor(source.id, id)).length;
+      return `<div id="source-${slot}-${block.id}" class="source-block type-${block.type} level-${block.level} ${selected ? 'is-selected' : ''}" data-source-block="${block.id}">${block.type === 'heading' ? `<div class="scope-actions"><span>H${block.level}</span><button data-action="section" data-source-id="${source.id}" data-block-id="${block.id}" title="选入本标题及所有下级内容">${block.level === 1 ? '选整稿' : block.level === 2 ? '选本章' : '选本节'} ↗</button>${picked ? `<button data-action="complete-section" data-source-id="${source.id}" data-block-id="${block.id}" title="按原稿顺序补齐，在首个已选块处合并；保留改文和锁定">按原序补齐 ${picked}/${scope.length}</button>` : ''}</div>` : ''}<button class="source-text" data-action="select" data-source-id="${source.id}" data-block-id="${block.id}" aria-pressed="${!!selected}" aria-label="${replaceTarget ? '替换为' : selected ? '取消' : '选入'}：${escape(textLabel(block))}">${escape(block.type === 'heading' ? block.text.replace(/^\s*#{1,6}\s*/, '') : block.text)}</button><div class="selection-indicator"><span>${replaceTarget ? '点击替换成稿段落' : selected ? '✓ 已选' : '＋ 点选加入'}</span>${selected ? `<button data-action="locate-draft" data-id="${selected.id}" title="定位成稿" class="selected-number">${String(order).padStart(2, '0')} ↗</button>` : `<span>L${block.startLine}</span>`}</div></div>`;
     }).join('')}</div></article>`;
   }).join('');
+  document.querySelectorAll('.source-column[data-source]').forEach(el => { el.querySelector('.source-body').scrollTop = sourcePositions.get(`${el.querySelector('.source-body').id}:${el.dataset.source}`) || 0; });
 }
 function renderDraft() {
   if (!project.draft.length) {
@@ -162,11 +224,15 @@ function renderReview() {
   }
   const metadata = review.metadata;
   const providerLabel = metadata.provider === 'imported' ? '离线导入的修改集 · 非本次实时模型生成' : `${metadata.provider || '模型'} · ${metadata.model || '模型未记录'}`;
+  const usage = metadata.usage;
+  const usageText = usage && typeof usage === 'object' ? Object.entries(usage).map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`).join(' · ') : '后端未返回用量，无法据此估算费用';
   const statuses = { pending: '待审阅', accepted: '已接受', rejected: '已拒绝', blocked: '保护拦截', stale: '已过期' };
-  $('#review').innerHTML = `<p class="review-intro"><span class="review-provider">${escape(providerLabel)}</span>${escape(review.summary)}<br>已接受 ${review.changes.filter(c => c.status === 'accepted').length} / ${review.changes.length} 处 · 其余不会改写成稿</p>${review.changes.length ? review.changes.map((item, index) => {
+  $('#review').innerHTML = `<p class="review-intro"><span class="review-provider">${escape(providerLabel)}</span>${escape(review.summary)}<br>已接受 ${review.changes.filter(c => c.status === 'accepted').length} / ${review.changes.length} 处 · 其余不会改写成稿</p><details class="review-usage"><summary>本次请求记录</summary><p>${escape(usageText)}</p>${Number.isFinite(metadata.elapsedMs) ? `<p>请求耗时 ${(metadata.elapsedMs / 1000).toFixed(2)} 秒</p>` : ''}${metadata.inputSignature ? `<p>请求 ${Number(metadata.requestBytes).toLocaleString()} 字节 · 输入 ${Number(metadata.inputCharacters).toLocaleString()} 字符</p><code>${escape(metadata.inputSignature)}</code>` : '<p>此修改集未记录输入签名。</p>'}</details>${review.changes.length ? review.changes.map((item, index) => {
     const block = project.draft.find(b => b.id === item.blockId);
     const source = block && sourceFor(block.sourceId);
-    return `<article class="change status-${item.status}" data-change-id="${item.id}" style="--source-color:${source?.color || '#748468'}"><div class="change-head"><span>${String(index + 1).padStart(2, '0')} · ${escape(sourceLabel(source))}</span><strong>${statuses[item.status]}</strong></div><p class="change-reason">${escape(item.reason)}</p><div class="diff-line diff-before" aria-label="修改前">${diffHtml(item.before, item.after, 'before')}</div><div class="diff-line diff-after" aria-label="建议修改后">${item.after ? diffHtml(item.before, item.after, 'after') : '<em>删除重复内容</em>'}</div>${item.issues?.length ? `<div class="change-issues">${item.issues.map(issue => escape(issue.message)).join('<br>')}</div>` : ''}<div class="change-actions"><button data-action="locate-draft" data-id="${item.blockId}">定位成稿</button>${!['accepted', 'rejected'].includes(item.status) ? `<button data-action="reject" data-id="${item.id}">拒绝</button><button class="accept" data-action="accept" data-id="${item.id}" ${item.status !== 'pending' ? 'disabled' : ''}>接受修改 ✓</button>` : ''}</div></article>`;
+    const at = project.draft.findIndex(b => b.id === item.blockId);
+    const context = at < 0 ? [] : [['前一段', project.draft[at - 1]?.text], ['当前段', block.text], ['后一段', project.draft[at + 1]?.text], [`来源原文 · ${sourceLabel(source)} · L${originalFor(block)?.startLine || '?'}`, originalFor(block)?.text]];
+    return `<article class="change status-${item.status}" data-change-id="${item.id}" style="--source-color:${source?.color || '#748468'}"><div class="change-head"><span>${String(index + 1).padStart(2, '0')} · ${escape(sourceLabel(source))}</span><strong>${statuses[item.status]}</strong></div><p class="change-reason">${escape(item.reason)}</p><div class="diff-line diff-before" aria-label="修改前">${diffHtml(item.before, item.after, 'before')}</div><div class="diff-line diff-after" aria-label="建议修改后">${item.after ? diffHtml(item.before, item.after, 'after') : '<em>删除重复内容</em>'}</div>${item.issues?.length ? `<div class="change-issues">${item.issues.map(issue => escape(issue.message)).join('<br>')}</div>` : ''}<details class="review-context"><summary>查看相邻段落与来源</summary>${context.length ? context.filter(([, text]) => text !== undefined).map(([label, text]) => `<div><strong>${escape(label)}</strong><p>${escape(text)}</p></div>`).join('') : '<p>该段已不在当前成稿中。</p>'}</details><div class="change-actions"><button data-action="locate-draft" data-id="${item.blockId}">定位成稿</button>${!['accepted', 'rejected'].includes(item.status) ? `<button data-action="reject" data-id="${item.id}">拒绝</button><button class="accept" data-action="accept" data-id="${item.id}" ${item.status !== 'pending' ? 'disabled' : ''}>接受修改 ✓</button><button data-action="reject-next" data-id="${item.id}">拒绝并下一条</button><button class="accept" data-action="accept-next" data-id="${item.id}" ${item.status !== 'pending' ? 'disabled' : ''}>接受并下一条</button>` : ''}</div></article>`;
   }).join('') : '<p class="muted">模型没有提出修改，成稿保持原样。</p>'}`;
 }
 function renderTabs() {
@@ -185,42 +251,58 @@ async function api(url, payload, options = {}) {
   if (!response.ok || data.error) { const error = new Error(data.error?.message || '请求失败'); error.code = data.error?.code; throw error; }
   return data;
 }
-async function refreshStatus() {
+async function refreshStatus(options = {}) {
   try {
-    connection = await api('/api/status');
+    connection = await api('/api/status', undefined, options);
     $('#model-status .status-dot').classList.toggle('ready', Object.values(connection.providers).some(p => p.ready));
   } catch (error) { connection = { error: error.message }; }
   renderProvider();
+  return connection;
 }
 function renderProvider() {
   const status = connection?.providers?.[provider];
   $('#provider').value = provider;
   $('#provider-details').innerHTML = status ? `<strong>${status.ready ? (provider === 'external-api' ? '● 已配置 · 待请求验证' : '● 已核验登录') : '○ 尚不可用'} · ${escape(status.code || provider)}</strong>${escape(status.message || '可以发起请求')}<br><code>${escape(status.model || '')}${status.apiStyle ? ` · ${escape(status.apiStyle)}` : ''}</code>${provider === 'codex-cli' && !status.ready ? '<p>在项目目录运行 <code>node scripts/login-codex.mjs</code>，使用所选数据目录的独立 profile 正常登录后重新检查。</p>' : ''}${provider === 'external-api' && !status.ready ? '<p>配置项目服务端环境后重新启动。具体变量见 docs/MODELS.md；密钥只由服务端读取。</p>' : ''}` : escape(connection?.error || '正在检查本地连接…');
 }
-async function polish() {
-  if (!project.draft.length || activeRequest) return;
+async function polish({ force = false } = {}) {
+  if (!project.draft.length || activeRequest || composing) return;
   document.activeElement?.blur();
-  const revision = project.revision, projectId = project.id;
-  const controller = new AbortController();
-  const requestId = crypto.randomUUID();
+  const basis = project, revision = project.revision, projectId = project.id, selectedProvider = provider;
+  const controller = new AbortController(), requestId = crypto.randomUUID();
+  try { preflightPolishRequest(basis, { requestId, provider: selectedProvider }); }
+  catch (error) { $('#request-state').textContent = '请求未发送 · 原成稿保留'; toast(error.requestBytes ? `${error.message} 当前请求 ${(error.requestBytes / 1_000_000).toFixed(2)} MB。` : error.message, true); return; }
   activeRequest = { requestId, controller, projectId };
   $('#request-state').textContent = '正在检查整稿的转承、指代、术语与重复';
   render();
   try {
-    const response = await api('/api/polish', { requestId, provider, input: core.buildPolishInput(project) }, { signal: controller.signal });
+    const status = await refreshStatus({ signal: controller.signal });
+    if (controller.signal.aborted || activeRequest?.requestId !== requestId) return;
+    const settings = status?.providers?.[selectedProvider];
+    if (!settings?.configurationId) { const error = new Error(settings?.message || status?.error || '请先配置润色连接。'); error.code = settings?.code || 'PROVIDER_UNCONFIGURED'; throw error; }
+    const prepared = await preparePolishRequest(basis, { requestId, provider: selectedProvider, configurationId: settings.configurationId, instructionVersion: settings.instructionVersion });
+    if (controller.signal.aborted || activeRequest?.requestId !== requestId) return;
+    commitActiveEditor();
+    if (!force && !composing && project === basis && canReusePolishReview(project, prepared)) {
+      $('#request-state').textContent = '已有同稿审阅 · 可直接继续，或重新请求';
+      $('#reuse-dialog').showModal(); return;
+    }
+    const response = await api('/api/polish', prepared.payload, { signal: controller.signal, body: prepared.serializedBody });
+    if (composing) await new Promise(resolve => document.addEventListener('compositionend', resolve, { once: true }));
     if (controller.signal.aborted || activeRequest?.requestId !== requestId) return;
     if (project.id !== projectId) throw new Error('项目已切换，旧项目的润色结果未应用。');
-    const applied = change(p => core.attachReview(p, response.result, revision, { provider: response.provider, model: response.model, elapsedMs: response.elapsedMs, requestId }));
+    const configurationMatches = response.configurationId === prepared.configurationId && response.instructionVersion === prepared.instructionVersion;
+    const metadata = { provider: response.provider, model: response.model, elapsedMs: response.elapsedMs, requestId,
+      usage: response.usage ?? null, requestBytes: prepared.requestBytes, inputCharacters: prepared.inputCharacters,
+      configurationId: response.configurationId || null, instructionVersion: response.instructionVersion || null,
+      inputSignature: configurationMatches ? prepared.inputSignature : null };
+    const applied = change(p => core.attachReview(p, response.result, revision, metadata));
     if (applied) { reviewTab = true; renderTabs(); $('#request-state').textContent = '修改集已就绪 · 接受后才进入成稿'; toast('整体润色完成，成稿尚未改变'); }
   } catch (error) {
     if (activeRequest?.requestId !== requestId) return;
-    if (error.name === 'AbortError') { $('#request-state').textContent = '已取消 · 原成稿保留'; }
+    if (error.name === 'AbortError') $('#request-state').textContent = '已取消 · 原成稿保留';
     else {
-      $('#request-state').textContent = '润色未完成 · 原成稿保留';
-      toast(error.message, true);
-      activeRequest = null;
-      render();
-      if (/NOT_CONFIGURED|UNCONFIGURED|NOT_LOGGED|AUTH|KEY|NOT_INSTALLED|PROVIDER/.test(error.code || '')) { $('#settings-dialog').showModal(); await refreshStatus(); }
+      $('#request-state').textContent = '润色未完成 · 原成稿保留'; toast(error.message, true);
+      if (/NOT_CONFIGURED|UNCONFIGURED|NOT_LOGGED|AUTH|KEY|NOT_INSTALLED|PROVIDER/.test(error.code || '')) $('#settings-dialog').showModal();
     }
   } finally { if (activeRequest?.requestId === requestId) { activeRequest = null; render(); } }
 }
@@ -234,12 +316,13 @@ async function cancelPolish() {
 }
 async function saveFile(kind) {
   document.activeElement?.blur();
+  try {
   const title = project.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 80).replace(/[. ]+$/g, '') || 'draft-weave';
   const safeTitle = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(title) ? `draft-${title}` : title;
-  const filename = kind === 'recovery' ? 'draft-weave-recovery.json' : `${safeTitle}${kind === 'project' ? '.draftweave.json' : '.md'}`;
-  const content = kind === 'recovery' ? unreadableAutosave : kind === 'project' ? core.serializeProject(project) : core.exportMarkdown(project);
+  const filename = kind === 'recovery' ? 'draft-weave-recovery.json' : `${safeTitle}${kind === 'project' ? '.draftweave.json' : kind === 'current' ? '.current.draftweave.json' : '.md'}`;
+  const content = kind === 'recovery' ? unreadableAutosave : kind === 'project' ? core.serializeProject(project) : kind === 'current' ? core.serializeProject(project, { includeHistory: false, compact: true }) : core.exportMarkdown(project);
   if (!content || (kind === 'markdown' && !project.draft.length)) return;
-  try {
+  if (kind === 'current') { downloadRaw(content, filename); toast('应急项目已下载：来源、锁定和审阅已保留，不含撤销历史'); return; }
     const result = await api('/api/export', { filename, content });
     document.querySelectorAll('dialog[open]').forEach(d => d.close());
     $('#export-title').textContent = kind === 'recovery' ? '原始草稿已备份' : kind === 'project' ? '项目已保存' : 'Markdown 已导出';
@@ -270,6 +353,8 @@ async function dispatch(action, el) {
     case 'paste': $('#paste-dialog').showModal(); break;
     case 'open-project': $('#project-file').click(); break;
     case 'save-project': await saveFile('project'); break;
+    case 'save-current': await saveFile('current'); break;
+    case 'download-input': if (inputRecoveryRaw) downloadRaw(inputRecoveryRaw, 'draft-weave-input-recovery.json'); break;
     case 'export': await saveFile('markdown'); break;
     case 'recover-local': await saveFile('recovery'); break;
     case 'window-drafts': showWindowDrafts(); break;
@@ -278,18 +363,20 @@ async function dispatch(action, el) {
       if (unreadableAutosave !== null) throw new Error('请先备份无法读取的原始草稿。');
       drafts.promote(core.serializeProject(project), project.title); toast('本稿已设为默认，旧默认稿可从「窗口草稿」恢复'); break;
     case 'restore-window': {
-      const next = core.deserializeProject(copiesShown[Number(id)]?.raw);
+      const copy = drafts.read(copiesShown[Number(id)]?.key);
+      if (copy.inputError) showInputRecovery(copy.inputError, copy.inputRecoveryRaw);
+      const next = core.deserializeProject(copy.raw);
       commitActiveEditor();
       drafts.archive(core.serializeProject(project), '恢复前的本窗口草稿');
       await cancelPolish();
-      project = next; replaceTarget = null; visibleSources = []; reviewTab = false; persist(); render();
+      project = next; replaceTarget = null; visibleSources = []; reviewTab = false; persist({ replaceInput: true }); render();
       $('#window-dialog').close(); toast('已恢复到本窗口，其他窗口不受影响'); break;
     }
     case 'download-window': {
-      const copy = copiesShown[Number(id)];
-      const url = URL.createObjectURL(new Blob([copy.raw], { type: 'application/json' }));
-      const link = document.createElement('a'); link.href = url; link.download = 'window-draft.draftweave.json'; link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000); break;
+      const copy = drafts.read(copiesShown[Number(id)]?.key);
+      downloadRaw(copy.raw, 'window-draft.draftweave.json');
+      if (copy.inputError) showInputRecovery(copy.inputError, copy.inputRecoveryRaw);
+      break;
     }
     case 'delete-window': drafts.remove(copiesShown[Number(id)].key); showWindowDrafts(); break;
     case 'undo': change(core.undo, '已撤销上一步'); break;
@@ -301,7 +388,7 @@ async function dispatch(action, el) {
       // Keep a single reversible snapshot so starting a blank project never silently loses work.
       const previous = { ...project }; delete previous.history;
       const next = core.createProject(); next.id = project.id; next.revision = project.revision + 1; next.history = [...project.history, previous].slice(-80);
-      project = next; visibleSources = []; replaceTarget = null; reviewTab = false; persist(); render(); toast('已新建空白项目，可撤销恢复'); break;
+      project = next; visibleSources = []; replaceTarget = null; reviewTab = false; persist({ replaceInput: true }); render(); toast('已新建空白项目，可撤销恢复'); break;
     }
     case 'select': {
       if (replaceTarget) {
@@ -312,6 +399,10 @@ async function dispatch(action, el) {
         const changed = change(p => selected ? core.removeBlock(p, selected.id) : core.selectBlocks(p, sourceId, [blockId]));
         if (changed && !selected) focusDraft(selectedFor(sourceId, blockId)?.id);
       } break;
+    }
+    case 'complete-section': {
+      change(p => core.completeSection(p, sourceId, blockId), '已按原稿顺序补齐，改文与锁定保留；可一次撤销');
+      const first = selectedFor(sourceId, blockId); if (first) focusDraft(first.id); break;
     }
     case 'section': {
       change(p => core.selectSection(p, sourceId, blockId), '章节已选入，子段可独立取消');
@@ -338,7 +429,18 @@ async function dispatch(action, el) {
     case 'refresh-status': await refreshStatus(); break;
     case 'preview': $('#markdown-preview').value = core.exportMarkdown(project); $('#preview-issues').textContent = core.analyzeStructure(project).length ? '结构提示可回画布定位处理' : '按当前画布顺序原样拼接'; $('#preview-dialog').showModal(); break;
     case 'polish': await polish(); break;
+    case 'reuse-review': $('#reuse-dialog').close(); reviewTab = true; renderTabs(); break;
+    case 'force-polish': $('#reuse-dialog').close(); await polish({ force: true }); break;
     case 'cancel': await cancelPolish(); break;
+    case 'accept-next': case 'reject-next': {
+      const at = project.review.changes.findIndex(item => item.id === id);
+      if (change(p => core.decideChange(p, id, action === 'accept-next' ? 'accept' : 'reject'))) {
+        const pending = project.review.changes.slice(at + 1).concat(project.review.changes.slice(0, at)).find(item => item.status === 'pending');
+        const card = pending && document.querySelector(`[data-change-id="${pending.id}"]`);
+        if (card) { flash(card); card.querySelector('[data-action="accept-next"]')?.focus({ preventScroll: true }); }
+        else toast('没有待审阅的建议；保护拦截和过期建议保持原状');
+      } break;
+    }
     case 'accept': change(p => core.decideChange(p, id, 'accept'), '已接受这一处修改'); break;
     case 'reject': change(p => core.decideChange(p, id, 'reject'), '已拒绝，原文保留'); break;
     case 'import-review': $('#review-file').click(); break;
@@ -356,16 +458,23 @@ document.addEventListener('change', event => {
   if (el.id === 'protect-quotes') change(p => core.setProtection(p, { quotes: el.checked }));
   if (el.id === 'provider') { provider = el.value; renderProvider(); }
 });
-// Commit text on blur without replacing the focused UI while a toolbar click is in flight.
+// A small per-block journal is synchronous; full checkpoints wait for a pause or a bound.
 document.addEventListener('focusout', event => {
-  const el = event.target;
-  if (!el.matches('textarea[data-edit-id]')) return;
-  try {
-    const next = core.editBlock(project, el.dataset.editId, el.value);
-    if (next !== project) { project = next; persist(); renderNotices(); renderReview(); $('#undo').disabled = !project.history.length; $('#draft-count').textContent = `${project.draft.length} 块 · ${core.exportMarkdown(project).replace(/\s/g, '').length.toLocaleString()} 字`; }
-  } catch (error) { toast(error.message, true); render(); }
+  if (!event.target.matches('textarea[data-edit-id]') || composing) return;
+  try { commitEditor(event.target); clearCheckpoints(); editSession = null; renderNotices(); renderReview(); $('#undo').disabled = !project.history.length; }
+  catch (error) { toast(error.message, true); }
 });
-document.addEventListener('input', event => { if (event.target.matches('textarea[data-edit-id]')) { event.target.style.height = '0px'; event.target.style.height = `${event.target.scrollHeight + 2}px`; checkpointInput(); } });
+document.addEventListener('input', event => {
+  if (!event.target.matches('textarea[data-edit-id]')) return;
+  event.target.style.height = '0px'; event.target.style.height = `${event.target.scrollHeight + 2}px`;
+  checkpointInput(); scheduleCheckpoint();
+});
+document.addEventListener('compositionstart', event => { if (event.target.matches('textarea[data-edit-id]')) composing = true; });
+document.addEventListener('compositionend', event => {
+  if (!event.target.matches('textarea[data-edit-id]')) return;
+  composing = false; checkpointInput(); scheduleCheckpoint();
+  if (deferredRender) { deferredRender = false; render(); }
+});
 document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.target.matches('textarea,input')) { event.preventDefault(); change(core.undo); }
   if (event.key === 'Escape' && replaceTarget) { replaceTarget = null; render(); }
@@ -420,7 +529,7 @@ $('#project-file').addEventListener('change', async event => {
   try {
     if (file.size > 50_000_000) throw new Error('项目文件超过 50 MB 上限。');
     const next = core.deserializeProject(await file.text());
-    await cancelPolish(); project = next; replaceTarget = null; visibleSources = []; reviewTab = false; persist(); render(); toast('项目已恢复，来源和审阅记录完整保留');
+    await cancelPolish(); project = next; replaceTarget = null; visibleSources = []; reviewTab = false; persist({ replaceInput: true }); render(); toast(/\.current\.draftweave\.json$/i.test(file.name) && !next.history.length ? '项目已恢复：来源、锁定和审阅保留，不含撤销历史' : '项目已恢复，来源和审阅记录完整保留');
   } catch (error) { toast(`打开失败：${error.message} 当前项目未改变。`, true); }
   event.target.value = '';
 });
@@ -437,14 +546,15 @@ $('#review-file').addEventListener('change', async event => {
   event.target.value = '';
 });
 window.addEventListener('resize', resizeTextareas);
-window.addEventListener('beforeunload', () => { document.activeElement?.blur(); persist(); });
+window.addEventListener('beforeunload', () => { checkpointInput(); if (!composing) { commitActiveEditor(); persist(); } });
 window.addEventListener('pagehide', () => { checkpointInput(); drafts.stop(); });
 window.addEventListener('pageshow', () => drafts.start());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') checkpointInput(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { checkpointInput(); if (!composing) flushInput(); } });
 let saved = null;
 try {
   const stored = drafts.restore();
   saved = stored.shared;
+  if (stored.inputError) showInputRecovery(stored.inputError, stored.inputRecoveryRaw);
   project = saved ? core.deserializeProject(saved) : makeSamples();
   if (stored.recovery) {
     try { project = core.deserializeProject(stored.recovery); }
@@ -457,4 +567,4 @@ try {
   if (saved !== null) { $('#recovery-banner').hidden = false; $('#save-state').textContent = '自动保存已暂停 · 原始草稿保留'; }
   toast('本地草稿无法读取，原始数据未改动。可先备份原稿，或打开已保存的项目。', true);
 }
-render(); drafts.start(); refreshStatus();
+render(); drafts.start(); if (!inputRecoveryRaw) persist(); refreshStatus();

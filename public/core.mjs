@@ -80,9 +80,10 @@ export function createProject({ title = '未命名成稿' } = {}) {
     protection: { numbers: true, quotes: true }, review: null, history: [] };
 }
 
-const snapshot = project => { const value = clone(project); delete value.history; return value; };
+const withoutHistory = ({ history, ...state }) => state;
+const snapshot = project => clone(withoutHistory(project));
 function mutate(project, transform, { document = true, keepReview = false } = {}) {
-  const next = clone(project);
+  const next = snapshot(project);
   if (transform(next) === false) return project;
   next.history = [...project.history, snapshot(project)].slice(-MAX_HISTORY);
   if (document) {
@@ -148,6 +149,24 @@ export function selectBlocks(project, sourceId, blockIds) {
 }
 export function selectSection(project, sourceId, headingId) {
   return selectBlocks(project, sourceId, getSectionBlockIds(sourceById(project, sourceId), headingId));
+}
+/** Explicitly regroup a source section at its first selected block, retaining manual edits and locks. */
+export function completeSection(project, sourceId, headingId) {
+  const source = sourceById(project, sourceId);
+  const scopeIds = new Set(getSectionBlockIds(source, headingId));
+  const scope = source.blocks.filter(block => scopeIds.has(block.id));
+  const inScope = block => block.sourceId === sourceId && scopeIds.has(block.sourceBlockId);
+  const selected = new Map(project.draft.filter(inScope).map(block => [block.sourceBlockId, block]));
+  const first = project.draft.findIndex(inScope);
+  const anchor = first < 0 ? project.draft.length : first;
+  if (project.draft.length + scope.length - selected.size > MAX_BLOCKS) fail('TOO_LARGE', '成稿块数超过上限。');
+  if (selected.size === scope.length && scope.every((block, index) => project.draft[anchor + index]?.id === selected.get(block.id).id)) return project;
+  return mutate(project, next => {
+    const existing = new Map(next.draft.filter(inScope).map(block => [block.sourceBlockId, block]));
+    const remaining = next.draft.filter(block => !inScope(block));
+    remaining.splice(anchor, 0, ...scope.map(block => existing.get(block.id) || selectedBlock(source, block)));
+    next.draft = remaining;
+  });
 }
 export function removeBlock(project, id) {
   const index = draftIndex(project, id);
@@ -414,10 +433,13 @@ function validateProject(project) {
   }
 }
 
-export function serializeProject(project) {
-  validateProject(project);
-  const serialized = JSON.stringify(project, null, 2);
-  if (new TextEncoder().encode(serialized).byteLength > 50_000_000) fail('TOO_LARGE', '项目与撤销历史合计超过 50 MB，请减少导入内容。');
+export function serializeProject(project, { includeHistory = true, compact = false } = {}) {
+  if (typeof includeHistory !== 'boolean' || typeof compact !== 'boolean') fail('INVALID_DATA', '项目保存选项无效。');
+  if (includeHistory) validateProject(project);
+  else validateState(project);
+  const saved = includeHistory ? project : { ...withoutHistory(project), history: [] };
+  const serialized = JSON.stringify(saved, null, compact ? undefined : 2);
+  if (new TextEncoder().encode(serialized).byteLength > 50_000_000) fail('TOO_LARGE', includeHistory ? '项目与撤销历史合计超过 50 MB，请减少导入内容。' : '项目内容超过 50 MB，请减少导入内容。');
   return serialized;
 }
 export function deserializeProject(serialized) {

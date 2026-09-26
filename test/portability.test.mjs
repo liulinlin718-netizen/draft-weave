@@ -33,6 +33,12 @@ test('allowlisted release runs from a moved Unicode/space directory and exports 
   const installation = path.join(runRoot, '可搬移 application');
   const pack = await packageApp(installation);
   assert.ok(pack.files.length > 10);
+  assert.ok(pack.files.includes('README.md'));
+  assert.ok(pack.files.includes('README.zh-CN.md'));
+  const manifest = JSON.parse(await readFile(path.join(installation, 'package.json'), 'utf8'));
+  const sourceManifest = JSON.parse(await readFile(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  assert.equal(manifest.name, 'draft-weave');
+  assert.equal(manifest.version, sourceManifest.version);
   assert.ok(!pack.files.some(file => /(?:^|\/)(?:\.runtime|output|outputs|test|node_modules)(?:\/|$)|AGENTS|STATUS|VALIDATION|START_TASK/.test(file)));
   for (const file of pack.files.filter(file => /\.(mjs|ps1|html)$/.test(file))) {
     assert.doesNotMatch(await readFile(path.join(installation, file), 'utf8'), /[A-Z]:[/\\]Users[/\\][^\s'"`]+|Use-DDriveDev/i);
@@ -57,6 +63,12 @@ test('allowlisted release runs from a moved Unicode/space directory and exports 
     const windows = await fetch(base + '/window-drafts.mjs');
     assert.equal(windows.status, 200);
     assert.match(await windows.text(), /draft-weave.default-writer.v1/);
+    for (const module of ['input-journal.mjs', 'polish-request.mjs']) {
+      assert.ok(pack.files.includes(`public/${module}`));
+      const response = await fetch(base + '/' + module);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /javascript/);
+    }
     const exported = await fetch(`${base}/api/export`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ filename: '研发笔记.md', content: document }) });
     assert.equal(exported.status, 201);
     const result = await exported.json();

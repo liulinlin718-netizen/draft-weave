@@ -20,6 +20,14 @@ node test/multi-window.mjs
 
 These checks use the default loopback port 6410. They write profiles and evidence under ignored `.runtime/` and `output/` folders, and use explicitly labeled model fixtures. Do not upload these artifacts or your drafts.
 
+For input journals, checkpoint failures, current-project recovery downloads, and review reuse, run:
+
+```sh
+node test/optimization-browser.mjs
+```
+
+This check starts its own fixture server on loopback port 6418 and writes an isolated browser profile, downloads, and evidence under `.runtime/optimization-browser/`. It uses the same explicit Playwright installation and optional `DW_BROWSER_BIN`; it makes no real model request.
+
 ## Preparing model acceptance inputs
 
 ```sh
